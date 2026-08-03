@@ -223,6 +223,9 @@ If there are no compilation errors, the chunk is returned by itself; otherwise, 
 
 `chunkname` is used as the chunk name for error messages and debug information. When absent, it defaults to a **random string**.
 
+> ### 🪲 Compatibility
+> Modern (2026) executors generally compile source through a Luau compiler and may expose it as `compile` or `luau.compile` in addition to `loadstring`.
+
 > ### ⛔ Danger
 > Vanilla Lua allows `source` to contain Lua bytecode, but it is a security vulnerability.\
 > This is a feature that should not be implemented.

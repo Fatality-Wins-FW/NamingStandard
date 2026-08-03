@@ -233,7 +233,7 @@ Returns whether the given property is scriptable (does not have the `notscriptab
 If `true`, the property is scriptable and can be indexed normally. If `nil`, the property does not exist.
 
 > ### 🪲 Known Issues
-> This appears to be backwards on Script-Ware. An example will not be provided until behavior is consistent.
+> Behavior is inconsistent across executors. An example will not be provided until behavior is consistent.
 
 ### Parameters
 
@@ -299,7 +299,7 @@ function setscriptable(object: Instance, property: string, value: boolean): bool
 Set whether the given property is scriptable. Returns whether the property was scriptable prior to changing it.
 
 > ### 🪲 Known Issues
-> This appears to be backwards on Script-Ware. An example will not be provided until behavior is consistent.
+> Behavior is inconsistent across executors. An example will not be provided until behavior is consistent.
 
 ### Parameters
 

@@ -53,17 +53,6 @@ Drawing.Fonts: {
 
 A table containing the available font names. The style of each font varies depending on the executor.
 
-### Fonts
-
-<details>
-<summary>Show font table</summary>
-
-> | Executor | Fonts |
-> | --------- | ----- |
-> | Script-Ware | ![Script-Ware Fonts](../images/fonts-sw.png) |
-> | Krnl | ![Krnl Fonts](../images/fonts-krnl.png) |
-</details>
-
 ### Example
 
 ```lua

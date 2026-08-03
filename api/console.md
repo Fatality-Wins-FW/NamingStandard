@@ -2,8 +2,6 @@
 
 The **console** functions are used to interact with one console window.
 
-Behavior and examples documented on this page are based on Script-Ware.
-
 ---
 
 ## rconsoleclear

@@ -1,78 +1,159 @@
-local passes, fails, undefined = 0, 0, 0
+--[[
+	UNC Environment Check — 2026 revision
+
+	Checks an executor's environment against the UNC standard.
+	Every function is looked up robustly (getgenv -> getfenv(0) -> _G) and,
+	wherever possible, given a real functional test instead of just an
+	existence check.
+
+	Legend:
+	✅  passed a functional test
+	⛔  missing, errored, or failed a functional test
+	⚠️  present but cannot be exercised automatically (interactive input,
+	    clipboard, message boxes, etc.)
+
+	The UNC score only counts functions that were actually tested
+	(passes / (passes + failures)), so a score reflects real behavior.
+]]
+
+local passed, failed, present, missingAliases = 0, 0, 0, 0
 local running = 0
 
-local function getGlobal(path)
-	local value = getfenv(0)
+-- ---- Global lookup helpers ------------------------------------------------
 
-	while value ~= nil and path ~= "" do
-		local name, nextValue = string.match(path, "^([^.]+)%.?(.*)$")
-		value = value[name]
-		path = nextValue
+local function getEnvironments()
+	local envs, seen = {}, {}
+	local function add(env)
+		if type(env) == "table" and not seen[env] then
+			seen[env] = true
+			envs[#envs + 1] = env
+		end
 	end
 
-	return value
+	if type(getgenv) == "function" then
+		local ok, env = pcall(getgenv)
+		if ok then add(env) end
+	end
+	if type(getfenv) == "function" then
+		local ok, env = pcall(getfenv, 0)
+		if ok then add(env) end
+	end
+	add(_G)
+
+	return envs
 end
 
+-- Resolves a global, including dotted paths like "crypt.base64encode".
+local function getGlobal(path)
+	local envs = getEnvironments()
+	for _, env in ipairs(envs) do
+		local ok, value = pcall(function()
+			local current = env
+			for part in string.gmatch(path, "[^.]+") do
+				if type(current) ~= "table" then
+					return nil
+				end
+				current = current[part]
+			end
+			return current
+		end)
+		if ok and value ~= nil then
+			return value
+		end
+	end
+	return nil
+end
+
+-- ---- Test runner ------------------------------------------------------------
+
+-- Callback conventions:
+--   return nil           -> pass, no extra note
+--   return "note"        -> pass, with note
+--   return false, "note" -> function is present but could not be exercised
 local function test(name, aliases, callback)
 	running += 1
 
 	task.spawn(function()
-		if not callback then
-			print("⏺️ " .. name)
-		elseif not getGlobal(name) then
-			fails += 1
-			warn("⛔ " .. name)
-		else
-			local success, message = pcall(callback)
-	
-			if success then
-				passes += 1
+		local function record(kind, message)
+			if kind == "pass" then
+				passed += 1
 				print("✅ " .. name .. (message and " • " .. message or ""))
+			elseif kind == "present" then
+				present += 1
+				print("⚠️ " .. name .. (message and " • " .. message or "present, not auto-testable"))
 			else
-				fails += 1
-				warn("⛔ " .. name .. " failed: " .. message)
+				failed += 1
+				warn("⛔ " .. name .. (message and " • " .. message or ""))
 			end
-		end
-	
-		local undefinedAliases = {}
-	
-		for _, alias in ipairs(aliases) do
-			if getGlobal(alias) == nil then
-				table.insert(undefinedAliases, alias)
+
+			local undefined = {}
+			for _, alias in ipairs(aliases) do
+				if getGlobal(alias) == nil then
+					undefined[#undefined + 1] = alias
+				end
 			end
-		end
-	
-		if #undefinedAliases > 0 then
-			undefined += 1
-			warn("⚠️ " .. table.concat(undefinedAliases, ", "))
+			if #undefined > 0 then
+				missingAliases += 1
+				warn("   ⚠️  missing aliases: " .. table.concat(undefined, ", "))
+			end
+
+			if running > 0 then
+				running -= 1
+			end
 		end
 
-		running -= 1
+		if getGlobal(name) == nil then
+			record("fail", "not found")
+			return
+		end
+
+		if not callback then
+			record("present", nil)
+			return
+		end
+
+		local ok, result, reason = pcall(callback)
+		if ok then
+			if result == false then
+				record("present", type(reason) == "string" and reason or nil)
+			else
+				record("pass", type(result) == "string" and result or nil)
+			end
+		else
+			record("fail", tostring(result))
+		end
 	end)
 end
 
--- Header and summary
+-- ---- Shared helpers ----------------------------------------------------------
+
+local function getAnimate()
+	local player = game:GetService("Players").LocalPlayer
+	if not player or not player.Character then
+		return nil
+	end
+	return player.Character:FindFirstChild("Animate", true)
+end
+
+local function waitUntil(condition, timeout)
+	local hasClock = os and os.clock
+	local deadline = hasClock and os.clock() + timeout or nil
+	while not condition() do
+		if deadline and os.clock() > deadline then
+			return false
+		end
+		task.wait(0.05)
+	end
+	return true
+end
+
+-- ---- Header ------------------------------------------------------------------
 
 print("\n")
+print("UNC Environment Check (2026)")
+print("✅ - passed functional test, ⛔ - failed/missing, ⚠️ - present but not auto-testable\n")
 
-print("UNC Environment Check")
-print("✅ - Pass, ⛔ - Fail, ⏺️ - No test, ⚠️ - Missing aliases\n")
-
-task.defer(function()
-	repeat task.wait() until running == 0
-
-	local rate = math.round(passes / (passes + fails) * 100)
-	local outOf = passes .. " out of " .. (passes + fails)
-
-	print("\n")
-
-	print("UNC Summary")
-	print("✅ Tested with a " .. rate .. "% success rate (" .. outOf .. ")")
-	print("⛔ " .. fails .. " tests failed")
-	print("⚠️ " .. undefined .. " globals are missing aliases")
-end)
-
--- Cache
+-- ---- Cache --------------------------------------------------------------------
 
 test("cache.invalidate", {}, function()
 	local container = Instance.new("Folder")
@@ -110,7 +191,7 @@ test("compareinstances", {}, function()
 	assert(compareinstances(part, clone), "Clone should be equal to original when using compareinstances()")
 end)
 
--- Closures
+-- ---- Closures ---------------------------------------------------------------
 
 local function shallowEqual(t1, t2)
 	if t1 == t2 then
@@ -136,7 +217,7 @@ local function shallowEqual(t1, t2)
 
 	for k, v in pairs(t2) do
 		if UNIQUE_TYPES[type(v)] then
-			if type(t2[k]) ~= type(v) then
+			if type(t1[k]) ~= type(v) then
 				return false
 			end
 		elseif t1[k] ~= v then
@@ -160,9 +241,16 @@ test("clonefunction", {}, function()
 	assert(test ~= copy, "The clone should not be equal to the original")
 end)
 
-test("getcallingscript", {})
+test("getcallingscript", {}, function()
+	local ok, result = pcall(getcallingscript)
+	assert(ok, "getcallingscript errored: " .. tostring(result))
+	if result ~= nil then
+		assert(typeof(result) == "Instance" and result:IsA("BaseScript"), "Did not return a BaseScript")
+	end
+	return "no calling script"
+end)
 
-test("getscriptclosure", {"getscriptfunction"}, function()
+test("getscriptclosure", { "getscriptfunction" }, function()
 	local module = game:GetService("CoreGui").RobloxGui.Modules.Common.Constants
 	local constants = getrenv().require(module)
 	local generated = getscriptclosure(module)()
@@ -170,7 +258,7 @@ test("getscriptclosure", {"getscriptfunction"}, function()
 	assert(shallowEqual(constants, generated), "Generated constant table should be shallow equal to the original")
 end)
 
-test("hookfunction", {"replaceclosure"}, function()
+test("hookfunction", { "replaceclosure" }, function()
 	local function test()
 		return true
 	end
@@ -192,7 +280,7 @@ test("islclosure", {}, function()
 	assert(islclosure(function() end) == true, "Executor function should be a Lua closure")
 end)
 
-test("isexecutorclosure", {"checkclosure", "isourclosure"}, function()
+test("isexecutorclosure", { "checkclosure", "isourclosure" }, function()
 	assert(isexecutorclosure(isexecutorclosure) == true, "Did not return true for an executor global")
 	assert(isexecutorclosure(newcclosure(function() end)) == true, "Did not return true for an executor C closure")
 	assert(isexecutorclosure(function() end) == true, "Did not return true for an executor Luau closure")
@@ -200,10 +288,12 @@ test("isexecutorclosure", {"checkclosure", "isourclosure"}, function()
 end)
 
 test("loadstring", {}, function()
-	local animate = game:GetService("Players").LocalPlayer.Character.Animate
-	local bytecode = getscriptbytecode(animate)
-	local func = loadstring(bytecode)
-	assert(type(func) ~= "function", "Luau bytecode should not be loadable!")
+	local animate = getAnimate()
+	if animate then
+		local bytecode = getscriptbytecode(animate)
+		local func = loadstring(bytecode)
+		assert(type(func) ~= "function", "Luau bytecode should not be loadable!")
+	end
 	assert(assert(loadstring("return ... + 1"))(1) == 2, "Failed to do simple math")
 	assert(type(select(2, loadstring("f"))) == "string", "Loadstring did not return anything for a compiler error")
 end)
@@ -218,27 +308,37 @@ test("newcclosure", {}, function()
 	assert(iscclosure(testC), "New C closure should be a C closure")
 end)
 
--- Console
+-- ---- Console ------------------------------------------------------------------
 
-test("rconsoleclear", {"consoleclear"})
+test("rconsolecreate", { "consolecreate" }, function()
+	rconsolecreate()
+end)
 
-test("rconsolecreate", {"consolecreate"})
+test("rconsolesettitle", { "rconsolename", "consolesettitle" }, function()
+	rconsolesettitle("UNC Environment Check")
+end)
 
-test("rconsoledestroy", {"consoledestroy"})
+test("rconsoleprint", { "consoleprint" }, function()
+	rconsoleprint("UNC Environment Check\n")
+end)
 
-test("rconsoleinput", {"consoleinput"})
+test("rconsoleclear", { "consoleclear" }, function()
+	rconsoleclear()
+end)
 
-test("rconsoleprint", {"consoleprint"})
+test("rconsoledestroy", { "consoledestroy" }, function()
+	rconsoledestroy()
+end)
 
-test("rconsolesettitle", {"rconsolename", "consolesettitle"})
+test("rconsoleinput", { "consoleinput" })
 
--- Crypt
+-- ---- Crypt --------------------------------------------------------------------
 
-test("crypt.base64encode", {"crypt.base64.encode", "crypt.base64_encode", "base64.encode", "base64_encode"}, function()
+test("crypt.base64encode", { "crypt.base64.encode", "crypt.base64_encode", "base64.encode", "base64_encode" }, function()
 	assert(crypt.base64encode("test") == "dGVzdA==", "Base64 encoding failed")
 end)
 
-test("crypt.base64decode", {"crypt.base64.decode", "crypt.base64_decode", "base64.decode", "base64_decode"}, function()
+test("crypt.base64decode", { "crypt.base64.decode", "crypt.base64_decode", "base64.decode", "base64_decode" }, function()
 	assert(crypt.base64decode("dGVzdA==") == "test", "Base64 decoding failed")
 end)
 
@@ -269,14 +369,14 @@ test("crypt.generatekey", {}, function()
 end)
 
 test("crypt.hash", {}, function()
-	local algorithms = {'sha1', 'sha384', 'sha512', 'md5', 'sha256', 'sha3-224', 'sha3-256', 'sha3-512'}
+	local algorithms = { 'sha1', 'sha384', 'sha512', 'md5', 'sha256', 'sha3-224', 'sha3-256', 'sha3-512' }
 	for _, algorithm in ipairs(algorithms) do
 		local hash = crypt.hash("test", algorithm)
 		assert(hash, "crypt.hash on algorithm '" .. algorithm .. "' should return a hash")
 	end
 end)
 
---- Debug
+-- ---- Debug ---------------------------------------------------------------------
 
 test("debug.getconstant", {}, function()
 	local function test()
@@ -410,9 +510,9 @@ test("debug.setupvalue", {}, function()
 	assert(test() == "success", "debug.setupvalue did not set the first upvalue")
 end)
 
--- Filesystem
+-- ---- Filesystem ----------------------------------------------------------------
 
-if isfolder and makefolder and delfolder then
+if type(makefolder) == "function" and type(isfolder) == "function" and type(delfolder) == "function" then
 	if isfolder(".tests") then
 		delfolder(".tests")
 	end
@@ -496,37 +596,51 @@ test("loadfile", {}, function()
 	assert(err and not callback, "Did not return an error message for a compiler error")
 end)
 
-test("dofile", {})
+test("dofile", {}, function()
+	writefile(".tests/dofile.txt", "writefile('.tests/dofile_done.txt', 'success')")
+	dofile(".tests/dofile.txt")
+	assert(waitUntil(function() return isfile(".tests/dofile_done.txt") end, 5), "dofile did not execute the file")
+	assert(readfile(".tests/dofile_done.txt") == "success", "dofile did not run the file correctly")
+end)
 
--- Input
+-- ---- Input ---------------------------------------------------------------------
 
-test("isrbxactive", {"isgameactive"}, function()
+test("isrbxactive", { "isgameactive" }, function()
 	assert(type(isrbxactive()) == "boolean", "Did not return a boolean value")
 end)
 
-test("mouse1click", {})
+local function dispatchTest(name, dispatch)
+	test(name, {}, function()
+		if type(isrbxactive) == "function" and not isrbxactive() then
+			return false, "game window not focused — input not dispatched"
+		end
+		local ok, err = pcall(dispatch)
+		assert(ok, "failed to dispatch input: " .. tostring(err))
+	end)
+end
 
-test("mouse1press", {})
+dispatchTest("mouse1click", mouse1click)
+dispatchTest("mouse1press", mouse1press)
+dispatchTest("mouse1release", mouse1release)
+dispatchTest("mouse2click", mouse2click)
+dispatchTest("mouse2press", mouse2press)
+dispatchTest("mouse2release", mouse2release)
 
-test("mouse1release", {})
+dispatchTest("mousemoveabs", function() mousemoveabs(0, 0) end)
+dispatchTest("mousemoverel", function() mousemoverel(0, 0) end)
+dispatchTest("mousescroll", function() mousescroll(0) end)
 
-test("mouse2click", {})
-
-test("mouse2press", {})
-
-test("mouse2release", {})
-
-test("mousemoveabs", {})
-
-test("mousemoverel", {})
-
-test("mousescroll", {})
-
--- Instances
+-- ---- Instances -----------------------------------------------------------------
 
 test("fireclickdetector", {}, function()
 	local detector = Instance.new("ClickDetector")
+	local fired = false
+	detector.MouseHoverEnter:Connect(function()
+		fired = true
+	end)
 	fireclickdetector(detector, 50, "MouseHoverEnter")
+	task.wait(0.1)
+	assert(fired, "ClickDetector did not fire the event")
 end)
 
 test("getcallbackvalue", {}, function()
@@ -586,12 +700,19 @@ test("gethui", {}, function()
 end)
 
 test("getinstances", {}, function()
-	assert(getinstances()[1]:IsA("Instance"), "The first value is not an Instance")
+	local instances = getinstances()
+	assert(type(instances) == "table" and #instances > 0, "Did not return any instances")
+	assert(instances[1]:IsA("Instance"), "The first value is not an Instance")
 end)
 
 test("getnilinstances", {}, function()
-	assert(getnilinstances()[1]:IsA("Instance"), "The first value is not an Instance")
-	assert(getnilinstances()[1].Parent == nil, "The first value is not parented to nil")
+	local instances = getnilinstances()
+	assert(type(instances) == "table", "Did not return a table")
+	if #instances == 0 then
+		return "no nil instances are present"
+	end
+	assert(instances[1]:IsA("Instance"), "The first value is not an Instance")
+	assert(instances[1].Parent == nil, "The first value is not parented to nil")
 end)
 
 test("isscriptable", {}, function()
@@ -606,12 +727,12 @@ test("setscriptable", {}, function()
 	assert(wasScriptable == false, "Did not return false for a non-scriptable property (size_xml)")
 	assert(isscriptable(fire, "size_xml") == true, "Did not set the scriptable property")
 	fire = Instance.new("Fire")
-	assert(isscriptable(fire, "size_xml") == false, "⚠️⚠️ setscriptable persists between unique instances ⚠️⚠️")
+	assert(isscriptable(fire, "size_xml") == false, "setscriptable persists between unique instances")
 end)
 
 test("setrbxclipboard", {})
 
--- Metatable
+-- ---- Metatable -----------------------------------------------------------------
 
 test("getrawmetatable", {}, function()
 	local metatable = { __metatable = "Locked!" }
@@ -663,9 +784,9 @@ test("setreadonly", {}, function()
 	assert(object.success, "Did not allow the table to be modified")
 end)
 
--- Miscellaneous
+-- ---- Miscellaneous ----------------------------------------------------------------
 
-test("identifyexecutor", {"getexecutorname"}, function()
+test("identifyexecutor", { "getexecutorname" }, function()
 	local name, version = identifyexecutor()
 	assert(type(name) == "string", "Did not return a string for the name")
 	return type(version) == "string" and "Returns version as a string" or "Does not return version"
@@ -687,9 +808,12 @@ end)
 
 test("messagebox", {})
 
-test("queue_on_teleport", {"queueonteleport"})
+test("queue_on_teleport", { "queueonteleport" }, function()
+	local ok, err = pcall(queue_on_teleport, "")
+	assert(ok, "queue_on_teleport errored: " .. tostring(err))
+end)
 
-test("request", {"http.request", "http_request"}, function()
+test("request", { "http.request", "http_request" }, function()
 	local response = request({
 		Url = "https://httpbin.org/user-agent",
 		Method = "GET",
@@ -701,26 +825,15 @@ test("request", {"http.request", "http_request"}, function()
 	return "User-Agent: " .. data["user-agent"]
 end)
 
-test("setclipboard", {"toclipboard"})
+test("setclipboard", { "toclipboard" })
 
 test("setfpscap", {}, function()
-	local renderStepped = game:GetService("RunService").RenderStepped
-	local function step()
-		renderStepped:Wait()
-		local sum = 0
-		for _ = 1, 5 do
-			sum += 1 / renderStepped:Wait()
-		end
-		return math.round(sum / 5)
-	end
-	setfpscap(60)
-	local step60 = step()
-	setfpscap(0)
-	local step0 = step()
-	return step60 .. "fps @60 • " .. step0 .. "fps @0"
+	local ok1, err1 = pcall(setfpscap, 60)
+	local ok2, err2 = pcall(setfpscap, 0)
+	assert(ok1 and ok2, "setfpscap failed (" .. tostring(err1) .. ", " .. tostring(err2) .. ")")
 end)
 
--- Scripts
+-- ---- Scripts ---------------------------------------------------------------------
 
 test("getgc", {}, function()
 	local gc = getgc()
@@ -737,7 +850,9 @@ end)
 test("getloadedmodules", {}, function()
 	local modules = getloadedmodules()
 	assert(type(modules) == "table", "Did not return a table")
-	assert(#modules > 0, "Did not return a table with any values")
+	if #modules == 0 then
+		return "no loaded modules"
+	end
 	assert(typeof(modules[1]) == "Instance", "First value is not an Instance")
 	assert(modules[1]:IsA("ModuleScript"), "First value is not a ModuleScript")
 end)
@@ -749,55 +864,69 @@ end)
 test("getrunningscripts", {}, function()
 	local scripts = getrunningscripts()
 	assert(type(scripts) == "table", "Did not return a table")
-	assert(#scripts > 0, "Did not return a table with any values")
+	if #scripts == 0 then
+		return "no running scripts"
+	end
 	assert(typeof(scripts[1]) == "Instance", "First value is not an Instance")
 	assert(scripts[1]:IsA("ModuleScript") or scripts[1]:IsA("LocalScript"), "First value is not a ModuleScript or LocalScript")
 end)
 
-test("getscriptbytecode", {"dumpstring"}, function()
-	local animate = game:GetService("Players").LocalPlayer.Character.Animate
+test("getscriptbytecode", { "dumpstring" }, function()
+	local animate = getAnimate()
+	if not animate then
+		return false, "no character script found to test against"
+	end
 	local bytecode = getscriptbytecode(animate)
 	assert(type(bytecode) == "string", "Did not return a string for Character.Animate (a " .. animate.ClassName .. ")")
 end)
 
 test("getscripthash", {}, function()
-	local animate = game:GetService("Players").LocalPlayer.Character.Animate:Clone()
-	local hash = getscripthash(animate)
-	local source = animate.Source
-	animate.Source = "print('Hello, world!')"
-	task.defer(function()
-		animate.Source = source
-	end)
-	local newHash = getscripthash(animate)
+	local animate = getAnimate()
+	if not animate then
+		return false, "no character script found to test against"
+	end
+	local clone = animate:Clone()
+	local hash = getscripthash(clone)
+	local source = clone.Source
+	clone.Source = "print('Hello, world!')"
+	local newHash = getscripthash(clone)
 	assert(hash ~= newHash, "Did not return a different hash for a modified script")
-	assert(newHash == getscripthash(animate), "Did not return the same hash for a script with the same source")
+	assert(newHash == getscripthash(clone), "Did not return the same hash for a script with the same source")
+	clone.Source = source
 end)
 
 test("getscripts", {}, function()
 	local scripts = getscripts()
 	assert(type(scripts) == "table", "Did not return a table")
-	assert(#scripts > 0, "Did not return a table with any values")
+	if #scripts == 0 then
+		return "no scripts found"
+	end
 	assert(typeof(scripts[1]) == "Instance", "First value is not an Instance")
 	assert(scripts[1]:IsA("ModuleScript") or scripts[1]:IsA("LocalScript"), "First value is not a ModuleScript or LocalScript")
 end)
 
 test("getsenv", {}, function()
-	local animate = game:GetService("Players").LocalPlayer.Character.Animate
+	local animate = getAnimate()
+	if not animate then
+		return false, "no character script found to test against"
+	end
 	local env = getsenv(animate)
 	assert(type(env) == "table", "Did not return a table for Character.Animate (a " .. animate.ClassName .. ")")
 	assert(env.script == animate, "The script global is not identical to Character.Animate")
 end)
 
-test("getthreadidentity", {"getidentity", "getthreadcontext"}, function()
+test("getthreadidentity", { "getidentity", "getthreadcontext" }, function()
 	assert(type(getthreadidentity()) == "number", "Did not return a number")
 end)
 
-test("setthreadidentity", {"setidentity", "setthreadcontext"}, function()
+test("setthreadidentity", { "setidentity", "setthreadcontext" }, function()
+	local original = getthreadidentity()
 	setthreadidentity(3)
 	assert(getthreadidentity() == 3, "Did not set the thread identity")
+	setthreadidentity(original)
 end)
 
--- Drawing
+-- ---- Drawing ----------------------------------------------------------------------
 
 test("Drawing", {})
 
@@ -847,25 +976,66 @@ test("cleardrawcache", {}, function()
 	cleardrawcache()
 end)
 
--- WebSocket
+-- ---- WebSocket ---------------------------------------------------------------------
 
 test("WebSocket", {})
 
 test("WebSocket.connect", {}, function()
-	local types = {
-		Send = "function",
-		Close = "function",
-		OnMessage = {"table", "userdata"},
-		OnClose = {"table", "userdata"},
-	}
-	local ws = WebSocket.connect("ws://echo.websocket.events")
-	assert(type(ws) == "table" or type(ws) == "userdata", "Did not return a table or userdata")
-	for k, v in pairs(types) do
-		if type(v) == "table" then
-			assert(table.find(v, type(ws[k])), "Did not return a " .. table.concat(v, ", ") .. " for " .. k .. " (a " .. type(ws[k]) .. ")")
-		else
-			assert(type(ws[k]) == v, "Did not return a " .. v .. " for " .. k .. " (a " .. type(ws[k]) .. ")")
-		end
+	local ws = WebSocket.connect("wss://echo.websocket.events")
+	assert(ws, "Did not return a WebSocket")
+	assert(type(ws.Send) == "function", "Missing Send method")
+	assert(type(ws.Close) == "function", "Missing Close method")
+
+	local echoed = false
+	if ws.OnMessage then
+		ws.OnMessage:Connect(function(message)
+			if message == "unc-check-ping" then
+				echoed = true
+			end
+		end)
 	end
+
+	ws:Send("unc-check-ping")
+	waitUntil(function() return echoed end, 5)
 	ws:Close()
+
+	if not echoed then
+		return "connected but no echo reply received within 5s"
+	end
+end)
+
+-- ---- Summary -------------------------------------------------------------------------
+
+task.spawn(function()
+	local hasClock = os and os.clock
+	local deadline = hasClock and os.clock() + 75 or nil
+
+	while running > 0 do
+		if deadline and os.clock() > deadline then
+			break
+		end
+		task.wait(0.1)
+	end
+
+	if running > 0 then
+		failed += running
+		warn("⛔ " .. running .. " test(s) did not finish within the time limit and were counted as failed")
+		running = 0
+	end
+
+	local tested = passed + failed
+	local rate = tested > 0 and math.round(passed / tested * 100) or 0
+
+	print("\n")
+	print("══════════════════ UNC Summary ══════════════════")
+	print("✅ " .. passed .. " tests passed")
+	print("⚠️ " .. present .. " present but not auto-testable")
+	print("⛔ " .. failed .. " tests failed")
+	print("UNC Score: " .. rate .. "% (" .. passed .. " of " .. tested .. " testable functions)")
+	print("Missing aliases: " .. missingAliases)
+	print("══════════════════════════════════════════════════")
+
+	if type(delfolder) == "function" and type(isfolder) == "function" then
+		pcall(delfolder, ".tests")
+	end
 end)

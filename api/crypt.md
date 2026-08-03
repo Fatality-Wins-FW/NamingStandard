@@ -2,8 +2,6 @@
 
 The **crypt** library provides methods for the encryption and decryption of string data.
 
-Behavior and examples documented on this page are based on Script-Ware.
-
 ---
 
 ## crypt.base64encode

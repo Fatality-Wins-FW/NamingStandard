@@ -125,7 +125,7 @@ Queues the specified script to be executed after the player teleports to a diffe
 
 ### Aliases
 
- * `queueonteleport` - Will supercede this function in the future.
+ * `queueonteleport`
 
 ### Example
 
