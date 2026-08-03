@@ -1,21 +1,3 @@
---[[
-	UNC Environment Check — 2026 revision
-
-	Checks an executor's environment against the UNC standard.
-	Every function is looked up robustly (getgenv -> getfenv(0) -> _G) and,
-	wherever possible, given a real functional test instead of just an
-	existence check.
-
-	Legend:
-	✅  passed a functional test
-	⛔  missing, errored, or failed a functional test
-	⚠️  present but cannot be exercised automatically (interactive input,
-	    clipboard, message boxes, etc.)
-
-	The UNC score only counts functions that were actually tested
-	(passes / (passes + failures)), so a score reflects real behavior.
-]]
-
 local passed, failed, present, missingAliases = 0, 0, 0, 0
 local running = 0
 
