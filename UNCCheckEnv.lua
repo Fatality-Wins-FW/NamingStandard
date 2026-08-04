@@ -1,8 +1,6 @@
 local passed, failed, present, missingAliases = 0, 0, 0, 0
 local running = 0
 
--- ---- Global lookup helpers ------------------------------------------------
-
 local function getEnvironments()
 	local envs, seen = {}, {}
 	local function add(env)
@@ -25,7 +23,6 @@ local function getEnvironments()
 	return envs
 end
 
--- Resolves a global, including dotted paths like "crypt.base64encode".
 local function getGlobal(path)
 	local envs = getEnvironments()
 	for _, env in ipairs(envs) do
@@ -46,12 +43,6 @@ local function getGlobal(path)
 	return nil
 end
 
--- ---- Test runner ------------------------------------------------------------
-
--- Callback conventions:
---   return nil           -> pass, no extra note
---   return "note"        -> pass, with note
---   return false, "note" -> function is present but could not be exercised
 local function test(name, aliases, callback)
 	running += 1
 
@@ -84,13 +75,12 @@ local function test(name, aliases, callback)
 			end
 		end
 
-		if getGlobal(name) == nil then
-			record("fail", "not found")
-			return
-		end
-
 		if not callback then
-			record("present", nil)
+			if getGlobal(name) == nil then
+				record("fail", "not found")
+			else
+				record("present", nil)
+			end
 			return
 		end
 
@@ -106,8 +96,6 @@ local function test(name, aliases, callback)
 		end
 	end)
 end
-
--- ---- Shared helpers ----------------------------------------------------------
 
 local function getAnimate()
 	local player = game:GetService("Players").LocalPlayer
@@ -129,13 +117,9 @@ local function waitUntil(condition, timeout)
 	return true
 end
 
--- ---- Header ------------------------------------------------------------------
-
 print("\n")
 print("UNC Environment Check (2026)")
 print("✅ - passed functional test, ⛔ - failed/missing, ⚠️ - present but not auto-testable\n")
-
--- ---- Cache --------------------------------------------------------------------
 
 test("cache.invalidate", {}, function()
 	local container = Instance.new("Folder")
@@ -172,8 +156,6 @@ test("compareinstances", {}, function()
 	assert(part ~= clone, "Clone should not be equal to original")
 	assert(compareinstances(part, clone), "Clone should be equal to original when using compareinstances()")
 end)
-
--- ---- Closures ---------------------------------------------------------------
 
 local function shallowEqual(t1, t2)
 	if t1 == t2 then
@@ -290,8 +272,6 @@ test("newcclosure", {}, function()
 	assert(iscclosure(testC), "New C closure should be a C closure")
 end)
 
--- ---- Console ------------------------------------------------------------------
-
 test("rconsolecreate", { "consolecreate" }, function()
 	rconsolecreate()
 end)
@@ -313,8 +293,6 @@ test("rconsoledestroy", { "consoledestroy" }, function()
 end)
 
 test("rconsoleinput", { "consoleinput" })
-
--- ---- Crypt --------------------------------------------------------------------
 
 test("crypt.base64encode", { "crypt.base64.encode", "crypt.base64_encode", "base64.encode", "base64_encode" }, function()
 	assert(crypt.base64encode("test") == "dGVzdA==", "Base64 encoding failed")
@@ -357,8 +335,6 @@ test("crypt.hash", {}, function()
 		assert(hash, "crypt.hash on algorithm '" .. algorithm .. "' should return a hash")
 	end
 end)
-
--- ---- Debug ---------------------------------------------------------------------
 
 test("debug.getconstant", {}, function()
 	local function test()
@@ -492,8 +468,6 @@ test("debug.setupvalue", {}, function()
 	assert(test() == "success", "debug.setupvalue did not set the first upvalue")
 end)
 
--- ---- Filesystem ----------------------------------------------------------------
-
 if type(makefolder) == "function" and type(isfolder) == "function" and type(delfolder) == "function" then
 	if isfolder(".tests") then
 		delfolder(".tests")
@@ -585,8 +559,6 @@ test("dofile", {}, function()
 	assert(readfile(".tests/dofile_done.txt") == "success", "dofile did not run the file correctly")
 end)
 
--- ---- Input ---------------------------------------------------------------------
-
 test("isrbxactive", { "isgameactive" }, function()
 	assert(type(isrbxactive()) == "boolean", "Did not return a boolean value")
 end)
@@ -611,8 +583,6 @@ dispatchTest("mouse2release", mouse2release)
 dispatchTest("mousemoveabs", function() mousemoveabs(0, 0) end)
 dispatchTest("mousemoverel", function() mousemoverel(0, 0) end)
 dispatchTest("mousescroll", function() mousescroll(0) end)
-
--- ---- Instances -----------------------------------------------------------------
 
 test("fireclickdetector", {}, function()
 	local detector = Instance.new("ClickDetector")
@@ -714,8 +684,6 @@ end)
 
 test("setrbxclipboard", {})
 
--- ---- Metatable -----------------------------------------------------------------
-
 test("getrawmetatable", {}, function()
 	local metatable = { __metatable = "Locked!" }
 	local object = setmetatable({}, metatable)
@@ -766,8 +734,6 @@ test("setreadonly", {}, function()
 	assert(object.success, "Did not allow the table to be modified")
 end)
 
--- ---- Miscellaneous ----------------------------------------------------------------
-
 test("identifyexecutor", { "getexecutorname" }, function()
 	local name, version = identifyexecutor()
 	assert(type(name) == "string", "Did not return a string for the name")
@@ -814,8 +780,6 @@ test("setfpscap", {}, function()
 	local ok2, err2 = pcall(setfpscap, 0)
 	assert(ok1 and ok2, "setfpscap failed (" .. tostring(err1) .. ", " .. tostring(err2) .. ")")
 end)
-
--- ---- Scripts ---------------------------------------------------------------------
 
 test("getgc", {}, function()
 	local gc = getgc()
@@ -908,8 +872,6 @@ test("setthreadidentity", { "setidentity", "setthreadcontext" }, function()
 	setthreadidentity(original)
 end)
 
--- ---- Drawing ----------------------------------------------------------------------
-
 test("Drawing", {})
 
 test("Drawing.new", {}, function()
@@ -958,8 +920,6 @@ test("cleardrawcache", {}, function()
 	cleardrawcache()
 end)
 
--- ---- WebSocket ---------------------------------------------------------------------
-
 test("WebSocket", {})
 
 test("WebSocket.connect", {}, function()
@@ -985,8 +945,6 @@ test("WebSocket.connect", {}, function()
 		return "connected but no echo reply received within 5s"
 	end
 end)
-
--- ---- Summary -------------------------------------------------------------------------
 
 task.spawn(function()
 	local hasClock = os and os.clock
