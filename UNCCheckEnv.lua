@@ -45,6 +45,7 @@ end
 
 local function test(name, aliases, callback)
 	running += 1
+	task.wait(0.05)
 
 	task.spawn(function()
 		local function record(kind, message)
